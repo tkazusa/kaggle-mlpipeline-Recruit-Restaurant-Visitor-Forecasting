@@ -759,7 +759,6 @@ def make_feats(end_date, n_day):
 
 if __name__ == "__main__":
 
-
     data_path = "../data/"
     air_reserve = pd.read_csv(data_path + "air_reserve.csv").rename(
         columns={"air_store_id": "store_id"}
@@ -853,6 +852,7 @@ if __name__ == "__main__":
     single_window_end = time.time()
     print(single_window_start - single_window_end)
 
+    """
     print("multi window started")
     multi_window_start = time.time()
 
@@ -879,3 +879,8 @@ if __name__ == "__main__":
 
     multi_window_end = time.time()
     print(multi_window_start - multi_window_end)
+    """
+
+    print("test feature")
+    test_feat = make_feats(date_add_days(start_date, 42), 39)
+    test_feat.to_csv("test_feat.csv", index=False, header=True)
