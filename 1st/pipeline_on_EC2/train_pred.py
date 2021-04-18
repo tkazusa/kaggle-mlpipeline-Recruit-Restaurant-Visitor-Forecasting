@@ -11,7 +11,7 @@ submission = pd.read_csv(data_path + "sample_submission.csv")
 submission["visit_date"] = submission["id"].str[-10:]
 submission["store_id"] = submission["id"].str[:-11]
 
-train_feat = pd.read_csv("train_feat_single.csv")
+train_feat = pd.read_csv("train_feat_multi.csv")
 test_feat = pd.read_csv("test_feat.csv")
 exclude_cols = [
     "id",
@@ -34,7 +34,7 @@ params = {
     "num_leaves": 60,
     "min_data": 100,
     "min_hessian": 1,
-    "verbose": -1,
+    "verbose": 1,
 }
 
 t0 = time.time()
@@ -47,7 +47,7 @@ print("Training : {}sec".format(train_time - t0))
 pred = gbm.predict(test_feat[predictors])
 
 pred_time = time.time()
-print("Training : {}sec".format(pred_time - train_time))
+print("Inference : {}sec".format(pred_time - train_time))
 subm = pd.DataFrame(
     {"id": test_feat.store_id + "_" + test_feat.visit_date, "visitors": np.expm1(pred)}
 )

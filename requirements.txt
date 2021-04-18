@@ -3,3 +3,4 @@ pandas
 python-dateutil
 scikit-learn
 lightgbm
+psutil

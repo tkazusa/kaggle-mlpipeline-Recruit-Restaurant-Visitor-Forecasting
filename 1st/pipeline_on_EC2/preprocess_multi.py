@@ -3,92 +3,9 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
+import psutil
 from dateutil.parser import parse
 from sklearn.preprocessing import LabelEncoder
-
-
-def data_prep(data_path):
-
-    air_reserve = pd.read_csv(data_path + "air_reserve.csv").rename(
-        columns={"air_store_id": "store_id"}
-    )
-    hpg_reserve = pd.read_csv(data_path + "hpg_reserve.csv").rename(
-        columns={"hpg_store_id": "store_id"}
-    )
-    air_store = pd.read_csv(data_path + "air_store_info.csv").rename(
-        columns={"air_store_id": "store_id"}
-    )
-    hpg_store = pd.read_csv(data_path + "hpg_store_info.csv").rename(
-        columns={"hpg_store_id": "store_id"}
-    )
-    air_visit = pd.read_csv(data_path + "air_visit_data.csv").rename(
-        columns={"air_store_id": "store_id"}
-    )
-    store_id_map = pd.read_csv(data_path + "store_id_relation.csv").set_index(
-        "hpg_store_id", drop=False
-    )
-    date_info = (
-        pd.read_csv(data_path + "date_info.csv")
-        .rename(columns={"calendar_date": "visit_date"})
-        .drop("day_of_week", axis=1)
-    )
-    submission = pd.read_csv(data_path + "sample_submission.csv")
-
-    submission["visit_date"] = submission["id"].str[-10:]
-    submission["store_id"] = submission["id"].str[:-11]
-
-    air_reserve["visit_date"] = air_reserve["visit_datetime"].str[:10]
-    air_reserve["reserve_date"] = air_reserve["reserve_datetime"].str[:10]
-    air_reserve["dow"] = pd.to_datetime(air_reserve["visit_date"]).dt.dayofweek
-
-    air_visit["id"] = air_visit["store_id"] + "_" + air_visit["visit_date"]
-
-    hpg_reserve["visit_date"] = hpg_reserve["visit_datetime"].str[:10]
-    hpg_reserve["reserve_date"] = hpg_reserve["reserve_datetime"].str[:10]
-    hpg_reserve["dow"] = pd.to_datetime(hpg_reserve["visit_date"]).dt.dayofweek
-
-    hpg_reserve["store_id"] = (
-        hpg_reserve["store_id"]
-        .map(store_id_map["air_store_id"])
-        .fillna(hpg_reserve["store_id"])
-    )
-    hpg_reserve.head()
-
-    hpg_store["store_id"] = (
-        hpg_store["store_id"]
-        .map(store_id_map["air_store_id"])
-        .fillna(hpg_store["store_id"])
-    )
-    hpg_store.rename(
-        columns={"hpg_genre_name": "air_genre_name", "hpg_area_name": "air_area_name"},
-        inplace=True,
-    )
-
-    data = pd.concat([air_visit, submission]).copy()
-    data["dow"] = pd.to_datetime(data["visit_date"]).dt.dayofweek
-
-    date_info["data_info_dow"] = pd.to_datetime(date_info["visit_date"]).dt.dayofweek
-    date_info["holiday_flg2"] = (
-        (date_info["data_info_dow"] > 4) | (date_info["holiday_flg"] == 1)
-    ).astype(int)
-    date_info = date_info.drop("data_info_dow", axis=1)
-
-    air_store["air_area_name0"] = air_store["air_area_name"].apply(
-        lambda x: x.split(" ")[0]
-    )
-    lbl = LabelEncoder()
-    air_store["air_genre_name"] = lbl.fit_transform(air_store["air_genre_name"])
-    air_store["air_area_name0"] = lbl.fit_transform(air_store["air_area_name0"])
-
-    data["visitors"] = np.log1p(data["visitors"])
-    data = data.merge(air_store, on="store_id", how="left")
-    data = data.merge(
-        date_info[["visit_date", "holiday_flg", "holiday_flg2"]],
-        on=["visit_date"],
-        how="left",
-    )
-
-    return data
 
 
 def date_add_days(start_date, days):
@@ -759,7 +676,9 @@ def make_feats(end_date, n_day):
 
 if __name__ == "__main__":
 
-    data_path = "../data/"
+    print("Data Loading Start")
+
+    data_path = "../../data/"
     air_reserve = pd.read_csv(data_path + "air_reserve.csv").rename(
         columns={"air_store_id": "store_id"}
     )
@@ -839,25 +758,9 @@ if __name__ == "__main__":
         how="left",
     )
 
-    single_window_start = time.time()
-    print(single_window_start)
-
-    start_date = "2017-03-12"
-    end_date = "2017-04-19"
-    n_days = 35
-
-    train_feat = make_feats(end_date, n_days)
-    train_feat.to_csv("train_feat_single.csv", index=False, header=True)
-
-    single_window_end = time.time()
-    print(single_window_start - single_window_end)
-
-    """
-    print("multi window started")
+    print("Feature Engineering Start")
     multi_window_start = time.time()
-
-    data_path = "../data/"
-    data = data_prep(data_path)
+    print(multi_window_start)
 
     start_date = "2017-03-12"
     end_date = "2017-04-19"
@@ -878,9 +781,19 @@ if __name__ == "__main__":
     train_feat.to_csv("train_feat_multi.csv", index=False, header=True)
 
     multi_window_end = time.time()
-    print(multi_window_start - multi_window_end)
-    """
+    print("Feature Engineering Completed")
+    print("Data Size: {}".format(train_feat.shape))
+    print("Time elapsed {} sec".format(multi_window_end - multi_window_start))
+    mem = psutil.virtual_memory()
+    print(
+        "memory usage total:{} usage: {} available: {}".format(
+            mem.total, mem.used, mem.available
+        )
+    )
 
-    print("test feature")
+    print("Feature Engineering for Test Data Start")
+    test_start = time.time()
     test_feat = make_feats(date_add_days(start_date, 42), 39)
     test_feat.to_csv("test_feat.csv", index=False, header=True)
+    test_end = time.time()
+    print("Time elapsed {} sec".format(test_end - test_start))
