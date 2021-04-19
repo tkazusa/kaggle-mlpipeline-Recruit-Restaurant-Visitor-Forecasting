@@ -46,37 +46,12 @@ def load_submission(submission_path):
     return submission
 
 
-def merge_train_test(
-    air_visit: pd.DataFrame,
-    submission: pd.DataFrame,
-    date_info: pd.DataFrame,
-    air_store_info: pd.DataFrame,
-    weather: pd.DataFrame,
-):
-    data = pd.concat((air_visit, submission))
-    data["is_test"].fillna(False, inplace=True)
-    data = pd.merge(left=data, right=date_info, on="visit_date", how="left")
-    data = pd.merge(left=data, right=air_store_info, on="air_store_id", how="left")
-    print(data.head())
-    print("weather is here")
-    print(weather.head())
-    print("trying weather merge")
-    data = pd.merge(left=data, right=weather, on="visit_date", how="left")
-    data["visitors"] = data["visitors"].astype(float)
-
-    data["visit_date"] = pd.to_datetime(data["visit_date"])
-    data.sort_values(["air_store_id", "visit_date"], inplace=True)
-    data.index = data["visit_date"]
-    print(data.head())
-    return data
-
-
 def load_weather_data(weather_path):
     weather_dfs = []
 
     for path in glob.glob(weather_path):
         weather_df = pd.read_csv(path)
-        weather_df["station_id"] = path.split("\\")[-1].rstrip(".csv")
+        weather_df["station_id"] = path.split("/")[-1].rstrip(".csv")
         weather_dfs.append(weather_df)
 
     weather = pd.concat(weather_dfs, axis="rows")
@@ -98,10 +73,30 @@ def load_weather_data(weather_path):
     weather = pd.merge(left=weather, right=means, on="visit_date", how="left")
     weather["avg_temperature"].fillna(weather["global_avg_temperature"], inplace=True)
     weather["precipitation"].fillna(weather["global_precipitation"], inplace=True)
-    weather = weather[["visit_date", "avg_temperature", "precipitation"]]
-    print(weather.head())
-
+    weather = weather[["visit_date", "avg_temperature", "precipitation", "station_id"]]
     return weather
+
+
+def merge_train_test(
+    air_visit: pd.DataFrame,
+    submission: pd.DataFrame,
+    date_info: pd.DataFrame,
+    air_store_info: pd.DataFrame,
+    weather: pd.DataFrame,
+):
+    data = pd.concat((air_visit, submission))
+    data["is_test"].fillna(False, inplace=True)
+    data = pd.merge(left=data, right=date_info, on="visit_date", how="left")
+    data = pd.merge(left=data, right=air_store_info, on="air_store_id", how="left")
+    data = pd.merge(
+        left=data, right=weather, on=["visit_date", "station_id"], how="left"
+    )
+    data["visitors"] = data["visitors"].astype(float)
+
+    data["visit_date"] = pd.to_datetime(data["visit_date"])
+    data.sort_values(["air_store_id", "visit_date"], inplace=True)
+    data.index = data["visit_date"]
+    return data
 
 
 def replace_outliers_to_max_value(data: pd.DataFrame):
@@ -302,7 +297,6 @@ if __name__ == "__main__":
 
     # Merge train and test set to create features at once.
     data = merge_train_test(air_visit, submission, date_info, air_store_info, weather)
-    print("completed")
     data = pd.get_dummies(data, columns=["day_of_week", "air_genre_name"])
     print("completed")
     print(data.head())
