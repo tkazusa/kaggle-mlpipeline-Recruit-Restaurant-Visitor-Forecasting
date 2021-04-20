@@ -1,4 +1,5 @@
 import glob
+import time
 
 import lightgbm as lgbm
 import numpy as np
@@ -378,6 +379,8 @@ def train_predict(
 
 
 if __name__ == "__main__":
+    print("solution started")
+    start = time.time()
     # Path to datasets
     data_path = "../../data/"
     air_visit_path = data_path + "kaggle/air_visit_data.csv"
@@ -406,6 +409,9 @@ if __name__ == "__main__":
     data = create_ewm_features(data=data)
     data = create_naive_rolling_features(data=data)
     data = pd.get_dummies(data, columns=["day_of_week", "air_genre_name"])
+    print("Preprocess and Feature Engineering completed")
+    preprocess_end = time.time()
+    print("elasped time {}sec".format(preprocess_end - start))
 
     # Split into train and test dataset.
     X_train, y_train, X_test = split_train_test(data=data)
@@ -420,3 +426,6 @@ if __name__ == "__main__":
         submission=submission,
         n_splits=6,
     )
+    print("Train and predict completed")
+    train_predict_end = time.time()
+    print("elasped time {}sec".format(train_predict_end - preprocess_end))
