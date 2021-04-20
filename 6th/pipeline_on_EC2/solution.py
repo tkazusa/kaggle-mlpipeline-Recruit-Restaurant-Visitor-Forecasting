@@ -1,8 +1,10 @@
 import glob
 
+import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 from scipy import optimize
+from sklearn import metrics, model_selection
 
 
 def load_air_visit(air_visit_path: str):
@@ -100,11 +102,15 @@ def merge_train_test(
 
 
 def replace_outliers_to_max_value(data: pd.DataFrame):
+    """Replace outliers of visitors to max value per each restaurant.
+    It is assumed that all restaurant has different normal distribution of visitors, so values that lie out of confidence interval.
+    """
+
     def _find_outliers(series):
         return (series - series.mean()) > 2.4 * series.std()
 
     def _cap_values(series):
-        outliers = find_outliers(series)
+        outliers = _find_outliers(series)
         max_val = series[~outliers].max()
         series[outliers] = max_val
         return series
@@ -117,19 +123,22 @@ def replace_outliers_to_max_value(data: pd.DataFrame):
     return data
 
 
-def create_month_features(data: pd.DataFrame):
+def create_calender_features(data: pd.DataFrame):
+    """Create calender features such like the day is weekend and the day of month."""
     data["is_weekend"] = data["day_of_week"].isin(["Saturday", "Sunday"]).astype(int)
     data["day_of_month"] = data["visit_date"].dt.day
     return data
 
 
 def create_ewm_features(data: pd.DataFrame):
+    """Create exponentially weighted means features to capture the trend of timeseires."""
+
     def _calc_shifted_ewm(series, alpha, adjust=True):
         return series.shift().ewm(alpha=alpha, adjust=adjust).mean()
 
     def _find_best_signal(series, adjust=False, eps=10e-5):
         def _f(alpha):
-            shifted_ewm = calc_shifted_ewm(
+            shifted_ewm = _calc_shifted_ewm(
                 series=series, alpha=min(max(alpha, 0), 1), adjust=adjust
             )
             corr = np.mean(np.power(series - shifted_ewm, 2))
@@ -139,13 +148,16 @@ def create_ewm_features(data: pd.DataFrame):
 
         return _calc_shifted_ewm(series=series, alpha=res["x"][0], adjust=adjust)
 
+    # Per store and the day of the week.
     roll = data.groupby(["air_store_id", "day_of_week"]).apply(
         lambda g: _find_best_signal(g["visitors_capped"])
     )
+    ### merge でdata.index = data["visit_date"] はずすと、ここでコケる。
     data["optimized_ewm_by_air_store_id_&_day_of_week"] = roll.sort_index(
         level=["air_store_id", "visit_date"]
     ).values
 
+    # Per store and week day or holiday.
     roll = data.groupby(["air_store_id", "is_weekend"]).apply(
         lambda g: _find_best_signal(g["visitors_capped"])
     )
@@ -153,6 +165,7 @@ def create_ewm_features(data: pd.DataFrame):
         level=["air_store_id", "visit_date"]
     ).values
 
+    # Per store and the day of the week for log1p visitors.
     roll = data.groupby(["air_store_id", "day_of_week"]).apply(
         lambda g: _find_best_signal(g["visitors_capped_log1p"])
     )
@@ -160,6 +173,7 @@ def create_ewm_features(data: pd.DataFrame):
         level=["air_store_id", "visit_date"]
     ).values
 
+    # Per store and week day or holiday for log1p visitors.
     roll = data.groupby(["air_store_id", "is_weekend"]).apply(
         lambda g: _find_best_signal(g["visitors_capped_log1p"])
     )
@@ -171,6 +185,8 @@ def create_ewm_features(data: pd.DataFrame):
 
 
 def create_naive_rolling_features(data: pd.DataFrame):
+    """Create rolling features."""
+
     def _extract_precedent_statistics(df, on, group_by):
 
         df.sort_values(group_by + ["visit_date"], inplace=True)
@@ -203,6 +219,8 @@ def create_naive_rolling_features(data: pd.DataFrame):
         for stat_name, values in stats.items():
             df["{}_{}_by_{}".format(on, stat_name, suffix)] = values
 
+    data = data.reset_index(drop=True)
+
     _extract_precedent_statistics(
         df=data, on="visitors_capped", group_by=["air_store_id", "day_of_week"]
     )
@@ -231,15 +249,27 @@ def create_naive_rolling_features(data: pd.DataFrame):
 
 
 def split_train_test(data: pd.DataFrame):
+    """Split data into train/test, and drop some features for training.
+    Args:
+        data (pd.DataFrame): The data which has whole features created.
+    Returns:
+        X_train (pd.DataFrame): Feature set for training.
+        X_test (pd.DataFrame): Feature set for test.
+        y_train (pd.Series): Values in the 'visitors_log1p' column for training set.
+    """
     data["visitors_log1p"] = np.log1p(data["visitors"])
     train = data[
         (data["is_test"] == False)
         & (data["is_outlier"] == False)
         & (data["was_nil"] == False)
     ]
+
+    print("====train====")
+    print(train.head())
     test = data[data["is_test"]].sort_values("test_number")
 
     to_drop = [
+        "id",
         "air_store_id",
         "is_test",
         "test_number",
@@ -250,6 +280,8 @@ def split_train_test(data: pd.DataFrame):
         "visitors",
         "air_area_name",
         "station_id",
+        "latitude_str",
+        "longitude_str",
         "station_latitude",
         "station_longitude",
         "station_vincenty",
@@ -264,17 +296,78 @@ def split_train_test(data: pd.DataFrame):
     X_test = test.drop("visitors_log1p", axis="columns")
     y_train = train["visitors_log1p"]
 
-    return X_train, X_test, y_train
+    return X_train, y_train, X_test
 
 
 def perform_sanicy_check(
-    X_train: pd.DataFrame, X_test: pd.DataFrame, y_train: pd.DataFrame
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
 ):
     assert X_train.isnull().sum().sum() == 0
     assert y_train.isnull().sum() == 0
     assert len(X_train) == len(y_train)
     assert X_test.isnull().sum().sum() == 0
     assert len(X_test) == 32019
+
+
+def train_predict(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame):
+    np.random.seed(42)
+    model = lgbm.LGBMRegressor(
+        objective="regression",
+        max_depth=5,
+        num_leaves=5 ** 2 - 1,
+        learning_rate=0.007,
+        n_estimators=30000,
+        min_child_samples=80,
+        subsample=0.8,
+        colsample_bytree=1,
+        reg_alpha=0,
+        reg_lambda=0,
+        random_state=np.random.randint(10e6),
+    )
+
+    n_splits = 6
+    cv = model_selection.KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+    val_scores = [0] * n_splits
+
+    sub = submission["id"].to_frame()
+    sub["visitors"] = 0
+
+    feature_importances = pd.DataFrame(index=X_train.columns)
+
+    for i, (fit_idx, val_idx) in enumerate(cv.split(X_train, y_train)):
+
+        X_fit = X_train.iloc[fit_idx]
+        y_fit = y_train.iloc[fit_idx]
+        X_val = X_train.iloc[val_idx]
+        y_val = y_train.iloc[val_idx]
+
+        model.fit(
+            X_fit,
+            y_fit,
+            eval_set=[(X_fit, y_fit), (X_val, y_val)],
+            eval_names=("fit", "val"),
+            eval_metric="l2",
+            early_stopping_rounds=200,
+            feature_name=X_fit.columns.tolist(),
+            verbose=False,
+        )
+
+        val_scores[i] = np.sqrt(model.best_score_["val"]["l2"])
+        sub["visitors"] += model.predict(X_test, num_iteration=model.best_iteration_)
+        feature_importances[i] = model.feature_importances_
+
+        print("Fold {} RMSLE: {:.5f}".format(i + 1, val_scores[i]))
+
+    sub["visitors"] /= n_splits
+    sub["visitors"] = np.expm1(sub["visitors"])
+
+    val_mean = np.mean(val_scores)
+    val_std = np.std(val_scores)
+
+    print("Local RMSLE: {:.5f} (±{:.5f})".format(val_mean, val_std))
 
 
 if __name__ == "__main__":
@@ -297,6 +390,32 @@ if __name__ == "__main__":
 
     # Merge train and test set to create features at once.
     data = merge_train_test(air_visit, submission, date_info, air_store_info, weather)
-    data = pd.get_dummies(data, columns=["day_of_week", "air_genre_name"])
     print("completed")
     print(data.head())
+
+    # Preprocessing and Feature Engineering
+    data = replace_outliers_to_max_value(data=data)
+    print(data.head())
+    data = create_calender_features(data=data)
+    print(data.head())
+    data = create_ewm_features(data=data)
+    print(data.head())
+    data = create_naive_rolling_features(data=data)
+    print(data.head())
+    data = pd.get_dummies(data, columns=["day_of_week", "air_genre_name"])
+    print(data.head())
+
+    # data.to_csv("data.csv")
+    # data = pd.read_csv("data.csv")
+    print(data.head())
+
+    # Split into train and test dataset.
+    X_train, y_train, X_test = split_train_test(data=data)
+    perform_sanicy_check(X_train=X_train, y_train=y_train, X_test=X_test)
+    print("sanity check completed")
+    print(X_train.head())
+    print(y_train.head())
+    print(X_test.head())
+
+    # Train and predict
+    train_predict(X_train=X_train, y_train=y_train, X_test=X_test)
