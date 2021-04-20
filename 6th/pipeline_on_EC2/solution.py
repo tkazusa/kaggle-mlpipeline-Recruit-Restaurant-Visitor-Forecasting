@@ -7,7 +7,7 @@ from scipy import optimize
 from sklearn import metrics, model_selection
 
 
-def load_air_visit(air_visit_path: str):
+def load_air_visit(air_visit_path: str) -> pd.DataFrame:
     air_visit = pd.read_csv(air_visit_path)
     air_visit.index = pd.to_datetime(air_visit["visit_date"])
     air_visit = (
@@ -21,7 +21,7 @@ def load_air_visit(air_visit_path: str):
     return air_visit
 
 
-def load_date_info(date_info_path: str):
+def load_date_info(date_info_path: str) -> pd.DataFrame:
     date_info = pd.read_csv(date_info_path)
     date_info.rename(
         columns={"holiday_flg": "is_holiday", "calendar_date": "visit_date"},
@@ -32,12 +32,12 @@ def load_date_info(date_info_path: str):
     return date_info
 
 
-def load_air_store_info(air_store_path):
+def load_air_store_info(air_store_path: str) -> pd.DataFrame:
     air_store_info = pd.read_csv(air_store_path)
     return air_store_info
 
 
-def load_submission(submission_path):
+def load_submission(submission_path: str) -> pd.DataFrame:
     submission = pd.read_csv(submission_path)
     submission["air_store_id"] = submission["id"].str.slice(0, 20)
     submission["visit_date"] = submission["id"].str.slice(21)
@@ -48,7 +48,7 @@ def load_submission(submission_path):
     return submission
 
 
-def load_weather_data(weather_path):
+def load_weather_data(weather_path: str) -> pd.DataFrame:
     weather_dfs = []
 
     for path in glob.glob(weather_path):
@@ -85,7 +85,7 @@ def merge_train_test(
     date_info: pd.DataFrame,
     air_store_info: pd.DataFrame,
     weather: pd.DataFrame,
-):
+) -> pd.DataFrame:
     data = pd.concat((air_visit, submission))
     data["is_test"].fillna(False, inplace=True)
     data = pd.merge(left=data, right=date_info, on="visit_date", how="left")
@@ -101,7 +101,7 @@ def merge_train_test(
     return data
 
 
-def replace_outliers_to_max_value(data: pd.DataFrame):
+def replace_outliers_to_max_value(data: pd.DataFrame) -> pd.DataFrame:
     """Replace outliers of visitors to max value per each restaurant.
     It is assumed that all restaurant has different normal distribution of visitors, so values that lie out of confidence interval.
     """
@@ -123,14 +123,14 @@ def replace_outliers_to_max_value(data: pd.DataFrame):
     return data
 
 
-def create_calender_features(data: pd.DataFrame):
+def create_calender_features(data: pd.DataFrame) -> pd.DataFrame:
     """Create calender features such like the day is weekend and the day of month."""
     data["is_weekend"] = data["day_of_week"].isin(["Saturday", "Sunday"]).astype(int)
     data["day_of_month"] = data["visit_date"].dt.day
     return data
 
 
-def create_ewm_features(data: pd.DataFrame):
+def create_ewm_features(data: pd.DataFrame) -> pd.DataFrame:
     """Create exponentially weighted means features to capture the trend of timeseires."""
 
     def _calc_shifted_ewm(series, alpha, adjust=True):
@@ -184,7 +184,7 @@ def create_ewm_features(data: pd.DataFrame):
     return data
 
 
-def create_naive_rolling_features(data: pd.DataFrame):
+def create_naive_rolling_features(data: pd.DataFrame) -> pd.DataFrame:
     """Create rolling features."""
 
     def _extract_precedent_statistics(df, on, group_by):
@@ -248,7 +248,7 @@ def create_naive_rolling_features(data: pd.DataFrame):
     return data
 
 
-def split_train_test(data: pd.DataFrame):
+def split_train_test(data: pd.DataFrame) -> pd.DataFrame:
     """Split data into train/test, and drop some features for training.
     Args:
         data (pd.DataFrame): The data which has whole features created.
@@ -263,9 +263,6 @@ def split_train_test(data: pd.DataFrame):
         & (data["is_outlier"] == False)
         & (data["was_nil"] == False)
     ]
-
-    print("====train====")
-    print(train.head())
     test = data[data["is_test"]].sort_values("test_number")
 
     to_drop = [
@@ -303,7 +300,7 @@ def perform_sanicy_check(
     X_train: pd.DataFrame,
     y_train: pd.Series,
     X_test: pd.DataFrame,
-):
+) -> None:
     assert X_train.isnull().sum().sum() == 0
     assert y_train.isnull().sum() == 0
     assert len(X_train) == len(y_train)
@@ -311,7 +308,20 @@ def perform_sanicy_check(
     assert len(X_test) == 32019
 
 
-def train_predict(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame):
+def train_predict(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_test: pd.DataFrame,
+    submission: pd.DataFrame,
+    n_splits: int = 6,
+) -> None:
+    """Train a LightGBM regressor model and predict test set. The mdoel is evaluated utilizing KFold CV.
+    Args:
+        X_train (pd.DataFrame): Train features.
+        y_train (pd.Series): Train target.
+        X_test (pd.DataFrame): Test features.
+        submission (pd.DataFrame):
+    """
     np.random.seed(42)
     model = lgbm.LGBMRegressor(
         objective="regression",
@@ -327,11 +337,8 @@ def train_predict(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFram
         random_state=np.random.randint(10e6),
     )
 
-    n_splits = 6
     cv = model_selection.KFold(n_splits=n_splits, shuffle=True, random_state=42)
-
     val_scores = [0] * n_splits
-
     sub = submission["id"].to_frame()
     sub["visitors"] = 0
 
@@ -395,27 +402,21 @@ if __name__ == "__main__":
 
     # Preprocessing and Feature Engineering
     data = replace_outliers_to_max_value(data=data)
-    print(data.head())
     data = create_calender_features(data=data)
-    print(data.head())
     data = create_ewm_features(data=data)
-    print(data.head())
     data = create_naive_rolling_features(data=data)
-    print(data.head())
     data = pd.get_dummies(data, columns=["day_of_week", "air_genre_name"])
-    print(data.head())
-
-    # data.to_csv("data.csv")
-    # data = pd.read_csv("data.csv")
-    print(data.head())
 
     # Split into train and test dataset.
     X_train, y_train, X_test = split_train_test(data=data)
     perform_sanicy_check(X_train=X_train, y_train=y_train, X_test=X_test)
     print("sanity check completed")
-    print(X_train.head())
-    print(y_train.head())
-    print(X_test.head())
 
     # Train and predict
-    train_predict(X_train=X_train, y_train=y_train, X_test=X_test)
+    train_predict(
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        submission=submission,
+        n_splits=6,
+    )
