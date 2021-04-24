@@ -251,7 +251,7 @@ def create_naive_rolling_features(data: pd.DataFrame) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    # Path to dataset    parser = argparse.ArgumentParser()
+    # Path to dataset
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default=None)
