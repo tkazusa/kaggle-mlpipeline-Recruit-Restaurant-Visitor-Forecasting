@@ -15,11 +15,11 @@ Kaggle の [Recruit Restaurant Visitor Forecasting](https://www.kaggle.com/c/rec
 
 ### データの準備
 
-[dataprep.ipynb](https://github.com/tkazusa/kaggle-mlpipeline-Recruit-Restaurant-Visitor-Forecasting/blob/main/notebook/dataprep.ipynb) では Kaggle API を活用してデータのダウンロードを行い、Amazon S3 へデータをアップロードします。
+[dataprep.ipynb](https://github.com/tkazusa/kaggle-mlpipeline-Recruit-Restaurant-Visitor-Forecasting/blob/main/dataprep.ipynb) では Kaggle API を活用してデータのダウンロードを行い、Amazon S3 へデータをアップロードします。
 
 ### AWS のサービスを使ったサーバレスな前処理、学習、推論
 
-[notebook.ipynb](https://github.com/tkazusa/kaggle-mlpipeline-Recruit-Restaurant-Visitor-Forecasting/blob/main/notebook/notebook.ipynb) では、AWS のマネージドな機械学習基盤サービスである、Amazon SageMaker を活用して、前処理や学習、推論を行います。データサイズが大きい、学習に時間がかかる、など Jupyter 環境では処理がしにくいような計算をそれぞれのジョブとしてサーバレスに実行するすることができます。
+[notebook.ipynb](https://github.com/tkazusa/kaggle-mlpipeline-Recruit-Restaurant-Visitor-Forecasting/blob/main/notebook.ipynb) では、AWS のマネージドな機械学習基盤サービスである、Amazon SageMaker を活用して、前処理や学習、推論を行います。データサイズが大きい、学習に時間がかかる、など Jupyter 環境では処理がしにくいような計算をそれぞれのジョブとしてサーバレスに実行するすることができます。
 
 ## 参考資料
 
