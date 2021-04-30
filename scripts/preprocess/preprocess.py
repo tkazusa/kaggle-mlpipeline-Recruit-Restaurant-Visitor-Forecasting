@@ -1,5 +1,7 @@
+import argparse
 import glob
-import time
+import os
+import re
 
 import lightgbm as lgbm
 import numpy as np
@@ -249,147 +251,25 @@ def create_naive_rolling_features(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def split_train_test(data: pd.DataFrame) -> pd.DataFrame:
-    """Split data into train/test, and drop some features for training.
-    Args:
-        data (pd.DataFrame): The data which has whole features created.
-    Returns:
-        X_train (pd.DataFrame): Feature set for training.
-        X_test (pd.DataFrame): Feature set for test.
-        y_train (pd.Series): Values in the 'visitors_log1p' column for training set.
-    """
-    data["visitors_log1p"] = np.log1p(data["visitors"])
-    train = data[
-        (data["is_test"] == False)
-        & (data["is_outlier"] == False)
-        & (data["was_nil"] == False)
-    ]
-    test = data[data["is_test"]].sort_values("test_number")
-
-    to_drop = [
-        "id",
-        "air_store_id",
-        "is_test",
-        "test_number",
-        "visit_date",
-        "was_nil",
-        "is_outlier",
-        "visitors_capped",
-        "visitors",
-        "air_area_name",
-        "station_id",
-        "latitude_str",
-        "longitude_str",
-        "station_latitude",
-        "station_longitude",
-        "station_vincenty",
-        "station_great_circle",
-        "visitors_capped_log1p",
-    ]
-    train = train.drop(to_drop, axis="columns")
-    train = train.dropna()
-    test = test.drop(to_drop, axis="columns")
-
-    X_train = train.drop("visitors_log1p", axis="columns")
-    X_test = test.drop("visitors_log1p", axis="columns")
-    y_train = train["visitors_log1p"]
-
-    return X_train, y_train, X_test
-
-
-def perform_sanicy_check(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_test: pd.DataFrame,
-) -> None:
-    assert X_train.isnull().sum().sum() == 0
-    assert y_train.isnull().sum() == 0
-    assert len(X_train) == len(y_train)
-    assert X_test.isnull().sum().sum() == 0
-    assert len(X_test) == 32019
-
-
-def train_predict(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_test: pd.DataFrame,
-    submission: pd.DataFrame,
-    n_splits: int = 6,
-) -> None:
-    """Train a LightGBM regressor model and predict test set. The mdoel is evaluated utilizing KFold CV.
-    Args:
-        X_train (pd.DataFrame): Train features.
-        y_train (pd.Series): Train target.
-        X_test (pd.DataFrame): Test features.
-        submission (pd.DataFrame):
-    """
-    np.random.seed(42)
-    model = lgbm.LGBMRegressor(
-        objective="regression",
-        max_depth=5,
-        num_leaves=5 ** 2 - 1,
-        learning_rate=0.007,
-        n_estimators=30000,
-        min_child_samples=80,
-        subsample=0.8,
-        colsample_bytree=1,
-        reg_alpha=0,
-        reg_lambda=0,
-        random_state=np.random.randint(10e6),
-    )
-
-    cv = model_selection.KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    val_scores = [0] * n_splits
-    sub = submission["id"].to_frame()
-    sub["visitors"] = 0
-
-    feature_importances = pd.DataFrame(index=X_train.columns)
-
-    for i, (fit_idx, val_idx) in enumerate(cv.split(X_train, y_train)):
-
-        X_fit = X_train.iloc[fit_idx]
-        y_fit = y_train.iloc[fit_idx]
-        X_val = X_train.iloc[val_idx]
-        y_val = y_train.iloc[val_idx]
-
-        model.fit(
-            X_fit,
-            y_fit,
-            eval_set=[(X_fit, y_fit), (X_val, y_val)],
-            eval_names=("fit", "val"),
-            eval_metric="l2",
-            early_stopping_rounds=200,
-            feature_name=X_fit.columns.tolist(),
-            verbose=False,
-        )
-
-        val_scores[i] = np.sqrt(model.best_score_["val"]["l2"])
-        sub["visitors"] += model.predict(X_test, num_iteration=model.best_iteration_)
-        feature_importances[i] = model.feature_importances_
-
-        print("Fold {} RMSLE: {:.5f}".format(i + 1, val_scores[i]))
-
-    sub["visitors"] /= n_splits
-    sub["visitors"] = np.expm1(sub["visitors"])
-
-    val_mean = np.mean(val_scores)
-    val_std = np.std(val_scores)
-
-    print("Local RMSLE: {:.5f} (±{:.5f})".format(val_mean, val_std))
-
-
 if __name__ == "__main__":
-    print("solution started")
-    start = time.time()
-    # Path to datasets
-    data_path = "../../data/"
-    air_visit_path = data_path + "kaggle/air_visit_data.csv"
-    date_info_path = data_path + "kaggle/date_info.csv"
+    # Path to dataset
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", type=str, default=None)
+    parser.add_argument("--output_dir", type=str, default=None)
+
+    args, _ = parser.parse_known_args()
+
+    air_visit_path = args.input_dir + "/kaggle/air_visit_data.csv"
+    date_info_path = args.input_dir + "/kaggle/date_info.csv"
+
     air_store_path = (
-        data_path + "weather/air_store_info_with_nearest_active_station.csv"
+        args.input_dir + "/weather/air_store_info_with_nearest_active_station.csv"
     )
-    submission_path = data_path + "kaggle/sample_submission.csv"
-    weather_path = data_path + "weather/1-1-16_5-31-17_Weather/*.csv"
+    submission_path = args.input_dir + "/kaggle/sample_submission.csv"
+    weather_path = (
+        args.input_dir + "/weather/1-1-16_5-31-17_Weather/1-1-16_5-31-17_Weather/*.csv"
+    )
+    output_path = args.output_dir + "/data.csv"
 
     # Load datasets
     air_visit = load_air_visit(air_visit_path=air_visit_path)
@@ -397,11 +277,11 @@ if __name__ == "__main__":
     air_store_info = load_air_store_info(air_store_path=air_store_path)
     weather = load_weather_data(weather_path=weather_path)
     submission = load_submission(submission_path=submission_path)
+    print("Data load completed")
 
     # Merge train and test set to create features at once.
     data = merge_train_test(air_visit, submission, date_info, air_store_info, weather)
-    print("completed")
-    print(data.head())
+    print("Data mearge completed")
 
     # Preprocessing and Feature Engineering
     data = replace_outliers_to_max_value(data=data)
@@ -409,23 +289,7 @@ if __name__ == "__main__":
     data = create_ewm_features(data=data)
     data = create_naive_rolling_features(data=data)
     data = pd.get_dummies(data, columns=["day_of_week", "air_genre_name"])
-    print("Preprocess and Feature Engineering completed")
-    preprocess_end = time.time()
-    print("elasped time {}sec".format(preprocess_end - start))
-
-    # Split into train and test dataset.
-    X_train, y_train, X_test = split_train_test(data=data)
-    perform_sanicy_check(X_train=X_train, y_train=y_train, X_test=X_test)
-    print("sanity check completed")
-
-    # Train and predict
-    train_predict(
-        X_train=X_train,
-        y_train=y_train,
-        X_test=X_test,
-        submission=submission,
-        n_splits=6,
-    )
-    print("Train and predict completed")
-    train_predict_end = time.time()
-    print("elasped time {}sec".format(train_predict_end - preprocess_end))
+    data = data.rename(columns=lambda x: re.sub("[^A-Za-z0-9_]+", "", x))
+    print("Feature engineering completed")
+    data.to_csv(output_path, header=True, index=False)
+    print("Data upload completed")
